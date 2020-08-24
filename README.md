@@ -7,7 +7,7 @@
 This is helm chart to install airflow, and other related projects on kubernetes cluster in AWS
 
 
-## Deployment Procedures
+## Deployment Procedures for local running minicube
 
 ```
 K8S_RELEASE_ENV=dev helmfile apply --suppress-secrets
