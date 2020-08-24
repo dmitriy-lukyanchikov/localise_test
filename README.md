@@ -37,7 +37,6 @@ Values for airflow chart are located in `/airflow/values/[ENVIRONMENT]/values.ya
 
 
 
-```
 
 ## Variables
 
