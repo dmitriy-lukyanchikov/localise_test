@@ -1,0 +1,17 @@
+controller:
+  hostNetwork: true
+  kind: DaemonSet
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 1
+    type: RollingUpdate
+  stats:
+    enabled: true
+  metrics:
+    enabled: true
+  config:
+    server-tokens: "false"
+  daemonset:
+    useHostPort: true
+rbac:
+  create: true

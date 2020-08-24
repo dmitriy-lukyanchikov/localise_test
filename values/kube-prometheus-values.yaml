@@ -1,0 +1,79 @@
+alertmanager:
+  enabled: false
+grafana:
+  enabled: false
+kubeDns:
+  enabled: false
+
+kubeStateMetrics:
+  enabled: true
+
+prometheusOperator:
+  enabled: true
+
+prometheus:
+  prometheusSpec:
+    replicas: 1
+    retention: 2h
+    serviceMonitorSelector:
+      matchLabels: {}
+    resources:
+      limits:
+        memory: 2G
+        cpu: "1"
+      requests:
+        memory: 250M
+        cpu: "0.1"
+
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: nginx
+
+kubelet:
+  serviceMonitor:
+    https: true
+
+kubeEtcd:
+  enabled: false
+
+coreDns:
+  enabled: true
+  service:
+    selector:
+      k8s-app: kube-dns
+
+kubeScheduler:
+  enabled: false
+  service:
+    selector:
+      k8s-app: null
+      component: kube-scheduler
+
+kubeControllerManager:
+  enabled: false
+  service:
+    selector:
+      k8s-app: null
+      component: kube-controller-manager
+
+nodeExporter:
+  enabled: true
+
+prometheus-node-exporter:
+  image:
+    repository: quay.io/prometheus/node-exporter
+    tag: v0.15.2
+  extraArgs:
+    - --collector.textfile.directory=/etc/file_metrics
+  extraHostVolumeMounts:
+    - name: rootfs
+      mountPath: /rootfs
+      hostPath: /
+      readOnly: true
+    - name: custom-metrics
+      mountPath: /etc/file_metrics
+      hostPath: /etc/file_metrics
+      readOnly: true

@@ -1,0 +1,21 @@
+{{- if .Values.airflow.exporter.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "airflow.fullname" . }}-exporter
+  labels:
+    app: {{ template "airflow.name" . }}-exporter
+    chart: {{ template "airflow.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  type: {{ .Values.airflow.exporter.service.type }}
+  selector:
+    app: {{ template "airflow.name" . }}-exporter
+    release: {{ .Release.Name }}
+  ports:
+    - name: metrics
+      protocol: TCP
+      port: {{ .Values.airflow.exporter.service.port }}
+{{- end }}

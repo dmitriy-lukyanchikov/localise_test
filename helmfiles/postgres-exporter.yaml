@@ -1,0 +1,32 @@
+environments:
+  default:
+    values:
+    - ../airflow/values/default.yaml
+
+repositories:
+- name: stable
+  url: https://kubernetes-charts.storage.googleapis.com/
+
+releases:
+  - name: prometheus-postgres-exporter
+    namespace: monitoring
+    chart: stable/prometheus-postgres-exporter
+    version: 1.1.1
+    wait: true
+    timeout: 90
+    values:
+      - ../values/prometheus-postgres-exporter.yaml
+      - config:
+          datasource:
+            host: data-{{ requiredEnv "K8S_RELEASE_ENV" }}-airflow-db.{{ .Environment.Values.projectDomain }}
+            user: ref+vault://secret/data/projects/airflow/{{ requiredEnv "K8S_RELEASE_ENV" }}/postgresql#root_user
+            password: ref+vault://secret/data/projects/airflow/{{ requiredEnv "K8S_RELEASE_ENV" }}/postgresql#root_pass
+            port: "5432"
+{{ if eq (env "K8S_RELEASE_ENV") "prod" }}
+            database: "airflow"
+{{ else }}
+            database: "postgres"
+{{ end }}
+            sslmode: disable
+      - nodeSelector:
+          environment: {{ requiredEnv "K8S_RELEASE_ENV" }}

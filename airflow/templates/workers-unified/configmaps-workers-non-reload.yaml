@@ -1,0 +1,43 @@
+{{- $root := . -}}
+{{- range .Values.airflow.workersUnified }}
+{{- if .enable }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "airflow.fullname" $root }}-{{ .name }}-workers-pip-req
+  labels:
+    component: {{ template "airflow.name" $root }}-worker
+    chart: {{ $root.Chart.Name }}
+    release: {{ $root.Release.Name }}
+    heritage: {{ $root.Release.Service }}
+data:
+  requirements.txt: |-
+{{- if .pythonModules }}
+  {{- range .pythonModules }}
+    {{ . }}
+  {{- end }}
+{{- end }}
+{{- if $root.Values.airflow.pythonModules }}
+  {{- range $root.Values.airflow.pythonModules }}
+    {{ . }}
+  {{- end }}
+{{- end }}
+
+{{- $worker := . }}
+{{- range .configs }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "airflow.fullname" $root }}-{{ $worker.name }}-{{ .name }}
+  labels:
+    component: {{ template "airflow.name" $root }}-worker
+    chart: {{ $root.Chart.Name }}
+    release: {{ $root.Release.Name }}
+    heritage: {{ $root.Release.Service }}
+data:
+{{ ($root.Files.Glob (print .path "/*")).AsConfig | indent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}

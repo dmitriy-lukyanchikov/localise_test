@@ -1,0 +1,20 @@
+repositories:
+- name: stable
+  url: https://kubernetes-charts.storage.googleapis.com/
+
+environments:
+  default:
+    values:
+    - ../airflow/values/default.yaml
+
+releases:
+  - name: prometheus-operator
+    namespace: monitoring
+    chart: stable/prometheus-operator
+    version: 9.3.1
+    values:
+      - ../values/kube-prometheus-values.yaml
+      - prometheus:
+          ingress:
+            hosts:
+            - prometheus.{{ .Environment.Values.projectDomain }}

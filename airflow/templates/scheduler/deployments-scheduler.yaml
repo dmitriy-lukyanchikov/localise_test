@@ -1,0 +1,296 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "airflow.fullname" . }}-scheduler
+  labels:
+    app: {{ template "airflow.name" . }}-scheduler
+    component: {{ template "airflow.name" . }}-scheduler
+    chart: {{ template "airflow.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.airflow.scheduler.replicas }}
+  {{- if .Values.airflow.scheduler.updateStategy }}
+  strategy:
+{{ toYaml .Values.airflow.scheduler.updateStategy | indent 4 }}
+  {{- end  }}
+  selector:
+    matchLabels:
+      app: {{ template "airflow.name" . }}-scheduler
+      release: {{ .Release.Name }}
+      component: {{ template "airflow.name" . }}-scheduler
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmaps/configmaps.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets/secrets.yaml") . | sha256sum }}
+        checksum/config-pip-requirements: {{ include (print $.Template.BasePath "/scheduler/configmaps-scheduler.yaml") . | sha256sum }}
+        checksum/secret-git-key: {{ include (print $.Template.BasePath "/secrets/secrets-git-key.yaml") . | sha256sum }}
+        checksum/secret-connections: {{ include (print $.Template.BasePath "/secrets/secret-connections.yaml") . | sha256sum }}
+      labels:
+        app: {{ template "airflow.name" . }}-scheduler
+        release: {{ .Release.Name }}
+        component: {{ template "airflow.name" . }}-scheduler
+    spec:
+      affinity:
+{{- if .Values.airflow.scheduler.affinity }}
+{{ toYaml .Values.airflow.scheduler.affinity | indent 8 }}
+{{- else  }}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: component
+                operator: In
+                values:
+                - {{ template "airflow.name" . }}-scheduler
+                - {{ template "airflow.name" . }}-worker
+                - {{ template "airflow.name" . }}-web
+            topologyKey: "kubernetes.io/hostname"
+{{- end }}
+      {{- if .Values.airflow.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.airflow.imagePullSecrets | indent 8 }}
+      {{- end }}
+      {{- if .Values.airflow.scheduler.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.airflow.scheduler.nodeSelector | indent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      initContainers:
+{{- if .Values.awsInitDB.enable }}
+      - name: {{ template "airflow.fullname" . }}-aws-init-db
+        image: postgres:9.6.9-alpine
+        command: 
+        - "sh"
+        - "-c"
+        - "/initdb.sh || exit 0"
+        env:
+        - name: PGUSER
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "airflow.fullname" . }}-airflow
+              key: masterPostgresUser
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "airflow.fullname" . }}-airflow
+              key: masterPostgresPassword
+        - name: PGHOST
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "airflow.fullname" . }}-secret-env
+              key: POSTGRES_HOST
+        - name: PROJECT_DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "airflow.fullname" . }}-secret-env
+              key: POSTGRES_USER
+        - name: PROJECT_DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ template "airflow.fullname" . }}-secret-env
+              key: POSTGRES_PASSWORD
+        - name: PROJECT_DB
+          valueFrom:
+            configMapKeyRef:
+              name: {{ template "airflow.fullname" . }}-env
+              key: POSTGRES_DB
+        volumeMounts:
+        - name: init-db
+          mountPath: /initdb.sh
+          subPath: initdb.sh
+{{- end }}
+      - name: {{ .Chart.Name }}-initdb
+        image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+        imagePullPolicy: {{ .Values.airflow.image.pullPolicy}}
+        envFrom:
+          - configMapRef:
+              name: '{{ template "airflow.fullname" . }}-env'
+          - secretRef:
+              name: '{{ template "airflow.fullname" . }}-secret-env'
+        env:
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: "/dev/null"
+        volumeMounts:
+          - name: pip-requirements
+            mountPath: /requirements.txt
+            subPath: requirements.txt
+        {{- if .Values.airflow.connections }}
+          - name: connections
+            mountPath: /usr/local/connections/add-connections.sh
+            subPath: add-connections.sh
+        {{- end}}
+        args:
+        - "/bin/bash"
+        - "-c"
+        - >
+          echo "initialize airflow db";
+          airflow initdb;
+          echo "adding connections";
+          /usr/local/connections/add-connections.sh;
+
+      - name: create-airflow-folders
+        image: busybox
+        command:
+          - "/bin/sh"
+          - "-c"
+          - >
+            ln -s {{ .Values.airflow.env.AIRFLOW_HOME }}/git-sync-data/{{ .Values.airflow.pluginsGitPath }} {{ .Values.airflow.pluginsPath }}/git-sync-data;
+            ln -s {{ .Values.airflow.env.AIRFLOW_HOME }}/git-sync-data/{{ .Values.airflow.dagsGitPath }} {{ .Values.airflow.dagsPath }}/git-sync-data;
+        volumeMounts:
+        - name: airflow-plugins
+          mountPath: {{ .Values.airflow.pluginsPath }}
+        - name: airflow-dags
+          mountPath: {{ .Values.airflow.dagsPath }}
+        securityContext:
+          runAsUser: 1000
+          fsGroup: 1000
+
+      - name: {{ .Chart.Name }}-git-sync-first-init
+        imagePullPolicy: {{ .Values.airflow.gitsync.image.pullPolicy }}
+        image: "{{ .Values.airflow.gitsync.image.repository }}:{{ .Values.airflow.gitsync.image.tag }}"
+        env:
+        {{- range $setting, $option := .Values.airflow.gitsync.env }}
+        - name: {{ $setting }}
+          value: "{{ $option }}"
+        {{- end }}
+        - name: GIT_SYNC_ONE_TIME
+          value: "true"
+        resources:
+{{ toYaml .Values.airflow.gitsync.resources | indent 10 }}
+        volumeMounts:
+          - name: git-sync-deploy-key
+            mountPath: /etc/git-secret/ssh
+            subPath: ssh
+          - name: git-sync-data
+            mountPath: /git
+        securityContext:
+          runAsUser: 0
+          fsGroup: 1000
+
+      containers:
+        - name: {{ .Chart.Name }}-scheduler
+          image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy}}
+          envFrom:
+            - configMapRef:
+                name: '{{ template "airflow.fullname" . }}-env'
+            - secretRef:
+                name: '{{ template "airflow.fullname" . }}-secret-env'
+          env:
+          {{- if .Values.airflow.scheduler.env  }}
+            {{- range $setting, $option := .Values.airflow.scheduler.env }}
+          - name: {{ $setting }}
+            value: "{{ $option }}"
+            {{- end }}
+          {{- end }}
+          resources:
+{{ toYaml .Values.airflow.scheduler.resources | indent 12 }}
+          volumeMounts:
+            - name: airflow-plugins
+              mountPath: {{ .Values.airflow.pluginsPath }}
+            - name: airflow-dags
+              mountPath: {{ .Values.airflow.dagsPath }}
+            - name: git-sync-data
+              mountPath: {{ .Values.airflow.env.AIRFLOW_HOME }}/git-sync-data
+            - name: pip-requirements
+              mountPath: /requirements.txt
+              subPath: requirements.txt
+{{- $root := . -}}
+{{- range .Values.additionalResources.configMap2File }}
+  {{- if .mountAsDir }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+  {{- else }}
+    {{- $configMap := . }}
+    {{- range $file, $content := .data }}
+            - name: {{ $configMap.name }}
+              mountPath: {{ $configMap.mountPath }}/{{ $file }}
+              subPath: {{ $file }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- range .Values.additionalResources.secret2File }}
+  {{- if .mountAsDir }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+  {{- else }}
+    {{- $secret := . }}
+    {{- range $file, $content := .data }}
+            - name: {{ $secret.name }}
+              mountPath: {{ $secret.mountPath }}/{{ $file }}
+              subPath: {{ $file }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+          args: ["scheduler", "-n", "{{ .Values.airflow.scheduler.num_runs }}"]
+          securityContext:
+            fsGroup: 1000
+
+        - name: {{ .Chart.Name }}-git-sync
+          imagePullPolicy: {{ .Values.airflow.gitsync.image.pullPolicy }}
+          image: "{{ .Values.airflow.gitsync.image.repository }}:{{ .Values.airflow.gitsync.image.tag }}"
+          env:
+          {{- range $setting, $option := .Values.airflow.gitsync.env }}
+          - name: {{ $setting }}
+            value: "{{ $option }}"
+          {{- end }}
+          resources:
+{{ toYaml .Values.airflow.gitsync.resources | indent 12 }}
+          volumeMounts:
+            - name: git-sync-deploy-key
+              mountPath: /etc/git-secret/ssh
+              subPath: ssh
+            - name: git-sync-data
+              mountPath: /git
+          securityContext:
+            runAsUser: 0
+            fsGroup: 1000
+
+      volumes:
+        - name: airflow-plugins
+          emptyDir:
+            defaultMode: 0755
+        - name: airflow-dags
+          emptyDir:
+            defaultMode: 0755
+        - name: git-sync-data
+          emptyDir:
+            defaultMode: 0755
+        - name: pip-requirements
+          configMap:
+            name: {{ template "airflow.fullname" . }}-scheduler-pip-requirements
+        - name: git-sync-deploy-key
+          secret:
+            secretName: {{ template "airflow.fullname" . }}-git-key
+            defaultMode: 0400
+{{- if .Values.awsInitDB.enable }}
+        - name: init-db
+          configMap:
+            name: {{ template "airflow.fullname" . }}-aws-init-db
+            defaultMode: 0755
+{{- end  }}
+{{- $root := . -}}
+{{- range .Values.additionalResources.configMap2File }}
+        - name: {{ .name }}
+          configMap:
+            name: {{ template "airflow.fullname" $root }}-{{ .name }}
+  {{- if .defaultMode }}
+            defaultMode: {{ .defaultMode }}
+  {{- end  }}
+{{- end  }}
+{{- range .Values.additionalResources.secret2File }}
+        - name: {{ .name }}
+          secret:
+            secretName: {{ template "airflow.fullname" $root }}-{{ .name }}
+  {{- if .defaultMode }}
+            defaultMode: {{ .defaultMode }}
+  {{- end  }}
+{{- end  }}
+{{- if .Values.airflow.connections }}
+        - name: connections
+          secret:
+            secretName: {{ template "airflow.fullname" . }}-connections
+            defaultMode: 0755
+{{- end }}

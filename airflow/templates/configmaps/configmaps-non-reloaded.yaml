@@ -1,0 +1,15 @@
+{{- if .Values.awsInitDB.enable }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "airflow.fullname" . }}-aws-init-db
+  labels:
+    app: {{ template "airflow.fullname" . }}
+    chart: {{ .Chart.Name }}
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+data:
+  initdb.sh: |-
+{{ printf .Values.awsInitDB.initScript | indent 4 }}
+{{- end }}

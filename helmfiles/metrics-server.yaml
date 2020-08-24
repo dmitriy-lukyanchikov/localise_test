@@ -1,0 +1,20 @@
+repositories:
+- name: stable
+  url: https://kubernetes-charts.storage.googleapis.com/
+
+environments:
+  default:
+    values:
+    - ../airflow/values/default.yaml
+
+releases:
+  - name: metrics-server
+    namespace: kube-system
+    chart: stable/metrics-server
+    version: 2.11.1
+    wait: true
+    timeout: 300
+    values:
+      - nodeSelector:
+          owner: data
+          component: airflow-system

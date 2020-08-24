@@ -1,0 +1,74 @@
+environments:
+  default:
+    values:
+    - ../airflow/values/default.yaml
+
+releases:
+  - name: airflow-{{ env "K8S_RELEASE_ENV" | default "dev" }}
+    namespace: {{ env "K8S_RELEASE_ENV" | default "dev" }}
+    chart: ../airflow
+    wait: true
+    timeout: 600
+    values:
+      - ../airflow/values/{{ env "K8S_RELEASE_ENV" | default "dev" }}/values.yaml
+      - monitoring:
+          namespace: {{ env "K8S_MONITORING_NAMESPACE" | default "monitoring" }}
+      - airflow:
+          secrets:
+            gitDeployKey: |
+              -----BEGIN OPENSSH PRIVATE KEY-----
+              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
+              -----END OPENSSH PRIVATE KEY-----
+          fernetKey: 81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=
+      - redis:
+          password: redis
+      - postgresql:
+          # This user and database is superuser default user and database
+          postgresUser: postgres
+          postgresPassword: postgres
+          # This user for using in airflow app 
+          EntrypointInitDB:
+            projectUser: airflow
+            projectPass: airflow
+            projectDatabase: airflow
+      - ingress: 
+          web:
+            host: web.{{ .Environment.Values.projectDomain }}
+          flower:
+            host: flower.{{ .Environment.Values.projectDomain }}
+

@@ -1,0 +1,73 @@
+{{- if .Values.airflow.exporter.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "airflow.fullname" . }}-exporter
+  labels:
+    app: {{ template "airflow.name" . }}-exporter
+    chart: {{ template "airflow.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: {{ template "airflow.name" . }}-exporter
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets/secrets.yaml") . | sha256sum }}
+      labels:
+        app: {{ template "airflow.name" . }}-exporter
+        release: {{ .Release.Name }}
+    spec:
+      {{- if .Values.airflow.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.airflow.imagePullSecrets | indent 8 }}
+      {{- end }}
+      {{- if .Values.airflow.exporter.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.airflow.exporter.nodeSelector | indent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      containers:
+        - name: {{ .Chart.Name }}-exporter
+          image: {{ .Values.airflow.exporter.image.repository }}:{{ .Values.airflow.exporter.image.tag }}
+          imagePullPolicy: {{ .Values.airflow.exporter.image.pullPolicy}}
+          env:
+          - name: AIRFLOW_PROMETHEUS_DATABASE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ template "airflow.fullname" . }}-secret-env
+                key: POSTGRES_PASSWORD
+          - name: AIRFLOW_PROMETHEUS_DATABASE_USER
+            valueFrom:
+              secretKeyRef:
+                name: {{ template "airflow.fullname" . }}-secret-env
+                key: POSTGRES_USER
+          - name: AIRFLOW_PROMETHEUS_DATABASE_BACKEND
+            value: "postgres"
+          - name: AIRFLOW_PROMETHEUS_LISTEN_ADDR
+            value: ":{{ .Values.airflow.exporter.service.port }}"
+          - name: AIRFLOW_PROMETHEUS_DATABASE_HOST
+            valueFrom:
+              secretKeyRef:
+                name: {{ template "airflow.fullname" . }}-secret-env
+                key: POSTGRES_HOST
+          - name: AIRFLOW_PROMETHEUS_DATABASE_NAME
+            valueFrom:
+              configMapKeyRef:
+                name: {{ template "airflow.fullname" . }}-env
+                key: POSTGRES_DB
+          - name: AIRFLOW_PROMETHEUS_DATABASE_PORT
+            valueFrom:
+              configMapKeyRef:
+                name: {{ template "airflow.fullname" . }}-env
+                key: POSTGRES_PORT
+          resources:
+{{ toYaml .Values.airflow.exporter.resources | indent 12 }}
+{{- end }}

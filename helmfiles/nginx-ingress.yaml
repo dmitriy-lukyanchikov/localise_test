@@ -1,0 +1,16 @@
+environments:
+  default:
+    values:
+    - ../airflow/values/default.yaml
+
+repositories:
+- name: stable
+  url: https://kubernetes-charts.storage.googleapis.com/
+
+releases:
+  - name: nginx-ingress
+    namespace: ingress
+    chart: stable/nginx-ingress
+    version: 1.41.3
+    values:
+      - ../values/nginx-ingress-values.yaml

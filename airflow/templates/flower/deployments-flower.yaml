@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "airflow.fullname" . }}-flower
+  labels:
+    app: {{ template "airflow.name" . }}-flower
+    component: {{ template "airflow.name" . }}-flower
+    chart: {{ template "airflow.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.airflow.flower.replicas }}
+  {{- if .Values.airflow.flower.updateStategy }}
+  strategy:
+{{ toYaml .Values.airflow.flower.updateStategy | indent 4 }}
+  {{- end  }}
+  selector:
+    matchLabels:
+      app: {{ template "airflow.name" . }}-flower
+      release: {{ .Release.Name }}
+      component: {{ template "airflow.name" . }}-flower
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmaps/configmaps.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets/secrets.yaml") . | sha256sum }}
+        checksum/config-pip-requirements: {{ include (print $.Template.BasePath "/flower/configmaps-flower.yaml") . | sha256sum }}
+        {{- if .Values.airflow.oauth.enable  }}
+          {{- if eq .Values.airflow.oauth.provider "google"  }}
+        checksum/secret-google-oauth: {{ include (print $.Template.BasePath "/secrets/secret-google-oauth.yaml") . | sha256sum }}
+          {{- end }}
+        {{- end }}
+      labels:
+        app: {{ template "airflow.name" . }}-flower
+        release: {{ .Release.Name }}
+        component: {{ template "airflow.name" . }}-flower
+    spec:
+      affinity:
+{{- if .Values.airflow.flower.affinity }}
+{{ toYaml .Values.airflow.flower.affinity | indent 8 }}
+{{- else }}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: component
+                operator: In
+                values:
+                - {{ template "airflow.name" . }}-flower
+                - {{ template "airflow.name" . }}-worker
+                - {{ template "airflow.name" . }}-scheduler
+            topologyKey: "kubernetes.io/hostname"
+{{- end }}
+      {{- if .Values.airflow.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.airflow.imagePullSecrets | indent 8 }}
+      {{- end }}
+      {{- if .Values.airflow.flower.nodeSelector }}
+      nodeSelector:
+{{ toYaml .Values.airflow.flower.nodeSelector | indent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      containers:
+        - name: {{ .Chart.Name }}-flower
+          image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+          imagePullPolicy: {{ .Values.airflow.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: '{{ template "airflow.fullname" . }}-env'
+            - secretRef:
+                name: '{{ template "airflow.fullname" . }}-secret-env'
+          env:
+          {{- if .Values.airflow.flower.env  }}
+            {{- range $setting, $option := .Values.airflow.flower.env }}
+          - name: {{ $setting }}
+            value: "{{ $option }}"
+            {{- end }}
+          {{- end }}
+          {{- if .Values.airflow.oauth.enable  }}
+            {{- if eq .Values.airflow.oauth.provider "google"  }}
+          - name: FLOWER_AUTH
+            value: ".*@{{ .Values.airflow.oauth.domain }}"
+          - name: FLOWER_OAUTH2_REDIRECT_URI
+            value: "{{ if .Values.ingress.https }}https{{ else }}http{{ end }}://{{ if .Values.ingress.createNamespaceSubdomain }}{{ .Release.Namespace }}.{{ end }}{{ .Values.ingress.flower.host }}/login"
+          - name: FLOWER_OAUTH2_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ template "airflow.fullname" . }}-google-oauth
+                key: googleClientID
+          - name: FLOWER_OAUTH2_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: {{ template "airflow.fullname" . }}-google-oauth
+                key: googleClientSecret
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: flower
+              containerPort: 5555
+              protocol: TCP
+          resources:
+{{ toYaml .Values.airflow.flower.resources | indent 12 }}
+          volumeMounts:
+            - name: pip-requirements
+              mountPath: /requirements.txt
+              subPath: requirements.txt
+          args: ["flower"]
+          securityContext:
+            fsGroup: 1000
+          livenessProbe:
+            tcpSocket:
+              port: flower
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: flower
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+      volumes:
+        - name: pip-requirements
+          configMap:
+            name: {{ template "airflow.fullname" . }}-flower-pip-requirements

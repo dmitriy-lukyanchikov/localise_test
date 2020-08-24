@@ -1,0 +1,369 @@
+## Workers are not in deployment, but in StatefulSet, to allow each worker expose a mini-server
+## that only serve logs, that will be used by the web server.
+
+{{- $root := . -}}
+{{- range .Values.airflow.workersUnified }}
+{{- if .enable }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "airflow.fullname" $root }}-{{ .name }}-worker
+  labels:
+    app: {{ template "airflow.name" $root }}-{{ .name }}-worker
+    component: {{ template "airflow.name" $root }}-worker
+    chart: {{ template "airflow.chart" $root }}
+    release: {{ $root.Release.Name }}
+    heritage: {{ $root.Release.Service }}
+    queue: "{{ .queueName }}"
+spec:
+  serviceName: {{ template "airflow.fullname" $root }}-{{ .name }}-worker
+  updateStrategy:
+    type: RollingUpdate
+{{- if .podManagementPolicy }}
+  podManagementPolicy: {{ .podManagementPolicy }}
+{{- else  }}
+  podManagementPolicy: Parallel
+{{- end }}
+  replicas: {{ .num_workers }}
+  selector:
+    matchLabels:
+      app: {{ template "airflow.name" $root }}-{{ .name }}-worker
+      component: {{ template "airflow.name" $root }}-worker
+      release: {{ $root.Release.Name }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmaps/configmaps.yaml") $root | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets/secrets.yaml") $root | sha256sum }}
+        checksum/config-pip-requirements: {{ print (.pythonModules) | sha256sum }}
+        checksum/config-global-pip-requirements: {{ print ($root.Values.airflow.pythonModules) | sha256sum }}
+        checksum/secret-git-key: {{ include (print $.Template.BasePath "/secrets/secrets-git-key.yaml") $root | sha256sum }}
+      labels:
+        app: {{ template "airflow.name" $root }}-{{ .name }}-worker
+        component: {{ template "airflow.name" $root }}-worker
+        release: {{ $root.Release.Name }}
+        queue: "{{ .queueName }}"
+    spec:
+      affinity:
+{{- if .affinity }}
+{{ toYaml .affinity | indent 8 }}
+{{- else  }}
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: component
+                operator: In
+                values:
+                - {{ template "airflow.name" $root }}-worker
+                - {{ template "airflow.name" $root }}-scheduler
+                - {{ template "airflow.name" $root }}-web
+                - {{ template "airflow.name" $root }}-flower
+            topologyKey: "kubernetes.io/hostname"
+{{- end }}
+      {{- if $root.Values.airflow.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml $root.Values.airflow.imagePullSecrets | indent 8 }}
+      {{- end }}
+      {{- if .nodeSelector }}
+      nodeSelector:
+{{ toYaml .nodeSelector | indent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      hostNetwork: {{ .hostNetwork }}
+      dnsPolicy: {{ .dnsPolicy }}
+      initContainers:
+{{- if .hostLogs }}
+      - name: log-volume-mount-hack
+        image: busybox
+        command: ["sh", "-c", "chown -R 1000:1000 {{ $root.Values.airflow.env.AIRFLOW_HOME }}/logs/"]
+        volumeMounts:
+        - name: logs
+          mountPath: {{ $root.Values.airflow.env.AIRFLOW_HOME }}/logs/
+{{- end }}
+      - name: create-airflow-folders
+        image: busybox
+        command:
+          - "/bin/sh"
+          - "-c"
+          - >
+            ln -s {{ $root.Values.airflow.env.AIRFLOW_HOME }}/git-sync-data/{{ $root.Values.airflow.pluginsGitPath }} {{ $root.Values.airflow.pluginsPath }}/git-sync-data;
+            ln -s {{ $root.Values.airflow.env.AIRFLOW_HOME }}/git-sync-data/{{ $root.Values.airflow.dagsGitPath }} {{ $root.Values.airflow.dagsPath }}/git-sync-data;
+        volumeMounts:
+        - name: airflow-plugins
+          mountPath: {{ $root.Values.airflow.pluginsPath }}
+        - name: airflow-dags
+          mountPath: {{ $root.Values.airflow.dagsPath }}
+        securityContext:
+          runAsUser: 1000
+          fsGroup: 1000
+
+      - name: {{ $root.Chart.Name }}-{{ .name }}-git-sync-first-init
+        imagePullPolicy: {{ $root.Values.airflow.gitsync.image.pullPolicy }}
+        image: "{{ $root.Values.airflow.gitsync.image.repository }}:{{ $root.Values.airflow.gitsync.image.tag }}"
+        env:
+        {{- range $setting, $option := $root.Values.airflow.gitsync.env }}
+        - name: {{ $setting }}
+          value: "{{ $option }}"
+        {{- end }}
+        - name: GIT_SYNC_ONE_TIME
+          value: "true"
+        resources:
+{{ toYaml $root.Values.airflow.gitsync.resources | indent 10 }}
+        volumeMounts:
+          - name: git-sync-deploy-key
+            mountPath: /etc/git-secret/ssh
+            subPath: ssh
+          - name: git-sync-data
+            mountPath: /git
+        securityContext:
+          runAsUser: 0
+          fsGroup: 1000
+
+      containers:
+        - name: {{ $root.Chart.Name }}-{{ .name }}-worker
+{{- if .image }}
+          imagePullPolicy: {{ .image.pullPolicy }}
+          image: "{{ .image.repository }}:{{ .image.tag }}"
+{{- else }}
+          imagePullPolicy: {{ $root.Values.airflow.image.pullPolicy }}
+          image: "{{ $root.Values.airflow.image.repository }}:{{ $root.Values.airflow.image.tag }}"
+{{- end }}
+          envFrom:
+            - configMapRef:
+                name: '{{ template "airflow.fullname" $root }}-env'
+            - secretRef:
+                name: '{{ template "airflow.fullname" $root }}-secret-env'
+          env:
+          {{- if .concurrency  }}
+          - name: AIRFLOW__CELERY__WORKER_CONCURRENCY
+            value: '{{ .concurrency }}'
+          {{- end }}
+          {{- if .env  }}
+            {{- range $setting, $option := .env }}
+          - name: {{ $setting }}
+            value: '{{ $option }}'
+            {{- end }}
+          {{- end }}
+          resources:
+{{ toYaml .resources | indent 12 }}
+          volumeMounts:
+            - name: airflow-plugins
+              mountPath: {{ $root.Values.airflow.pluginsPath }}
+            - name: airflow-dags
+              mountPath: {{ $root.Values.airflow.dagsPath }}
+            - name: git-sync-data
+              mountPath: {{ $root.Values.airflow.env.AIRFLOW_HOME }}/git-sync-data
+            - name: pip-requirements
+              mountPath: /requirements.txt
+              subPath: requirements.txt
+          {{- if .hostLogs }}
+            - name: logs
+              mountPath: {{ $root.Values.airflow.env.AIRFLOW_HOME }}/logs/
+          {{- end }}
+          {{- range .configs }}
+            - name: configs-{{ .name }}
+              mountPath: {{ .mountPath }}
+          {{- end }}
+          {{- if .S3Configs }}
+          {{- range .S3Configs }}
+            - name: s3-sync-dir
+              mountPath: {{ .mountPath }}
+              subPath: {{ .s3Path }}
+          {{- end }}
+          {{- end }}
+{{- range $root.Values.additionalResources.configMap2File }}
+  {{- if .mountAsDir }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+  {{- else }}
+    {{- $configMap := . }}
+    {{- range $file, $content := .data }}
+            - name: {{ $configMap.name }}
+              mountPath: {{ $configMap.mountPath }}/{{ $file }}
+              subPath: {{ $file }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- range $root.Values.additionalResources.secret2File }}
+  {{- if .mountAsDir }}
+            - name: {{ .name }}
+              mountPath: {{ .mountPath }}
+  {{- else }}
+    {{- $secret := . }}
+    {{- range $file, $content := .data }}
+            - name: {{ $secret.name }}
+              mountPath: {{ $secret.mountPath }}/{{ $file }}
+              subPath: {{ $file }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+          securityContext:
+            fsGroup: 1000
+          args:
+          - "worker"
+          {{- if .queueName }}
+          - "--queues={{ .queueName }}"
+          {{- end }}
+          ports:
+            - name: worker
+              containerPort: 8793
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: worker
+            initialDelaySeconds: 120
+            periodSeconds: 20
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: worker
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+
+        - name: {{ $root.Chart.Name }}-{{ .name }}-git-sync
+          imagePullPolicy: {{ $root.Values.airflow.gitsync.image.pullPolicy }}
+          image: "{{ $root.Values.airflow.gitsync.image.repository }}:{{ $root.Values.airflow.gitsync.image.tag }}"
+          env:
+          {{- range $setting, $option := $root.Values.airflow.gitsync.env }}
+          - name: {{ $setting }}
+            value: "{{ $option }}"
+          {{- end }}
+          resources:
+{{ toYaml $root.Values.airflow.gitsync.resources | indent 12 }}
+          volumeMounts:
+            - name: git-sync-deploy-key
+              mountPath: /etc/git-secret/ssh
+              subPath: ssh
+            - name: git-sync-data
+              mountPath: /git
+          securityContext:
+            runAsUser: 0
+            fsGroup: 1000
+
+      volumes:
+        - name: airflow-plugins
+          emptyDir:
+            defaultMode: 0755
+        - name: airflow-dags
+          emptyDir:
+            defaultMode: 0755
+        - name: git-sync-data
+          emptyDir:
+            defaultMode: 0755
+        - name: pip-requirements
+          configMap:
+            name: {{ template "airflow.fullname" $root }}-{{ .name }}-workers-pip-req
+        - name: git-sync-deploy-key
+          secret:
+            secretName: {{ template "airflow.fullname" $root }}-git-key
+            defaultMode: 0400
+        {{- if .hostLogs }}
+        - name: logs
+          hostPath:
+            path: /var/log/airflow/{{ template "airflow.fullname" $root }}-{{ .name }}-worker/
+            type: DirectoryOrCreate
+        {{- end }}
+        {{- $worker := . }}
+        {{- range .configs }}
+        - name: configs-{{ .name }}
+          configMap:
+            name: {{ template "airflow.fullname" $root }}-{{ $worker.name }}-{{ .name }}
+            defaultMode: 0755
+        {{- end }}
+        {{- if .S3Configs }}
+        - name: s3-sync-dir
+          emptyDir:
+            defaultMode: 0755
+        {{- end }}
+{{- range $root.Values.additionalResources.configMap2File }}
+        - name: {{ .name }}
+          configMap:
+            name: {{ template "airflow.fullname" $root }}-{{ .name }}
+  {{- if .defaultMode }}
+            defaultMode: {{ .defaultMode }}
+  {{- end  }}
+{{- end  }}
+{{- range $root.Values.additionalResources.secret2File }}
+        - name: {{ .name }}
+          secret:
+            secretName: {{ template "airflow.fullname" $root }}-{{ .name }}
+  {{- if .defaultMode }}
+            defaultMode: {{ .defaultMode }}
+  {{- end  }}
+{{- end  }}
+
+
+
+---
+# Headless service for stable DNS entries of StatefulSet members.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "airflow.fullname" $root }}-{{ .name }}-worker
+  labels:
+    app: {{ template "airflow.name" $root }}-{{ .name }}-worker
+    component: {{ template "airflow.name" $root }}-worker
+    chart: {{ template "airflow.chart" $root }}
+    release: {{ $root.Release.Name }}
+    heritage: {{ $root.Release.Service }}
+    queue: "{{ .queueName }}"
+spec:
+  ports:
+    - name: worker
+      protocol: TCP
+      port: 8793
+  clusterIP: None
+  selector:
+    app: {{ template "airflow.name" $root }}-{{ .name }}-worker
+    release: {{ $root.Release.Name }}
+
+{{- if .hpa.enable }}
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ template "airflow.fullname" $root }}-{{ .name }}-worker-hpa
+  labels:
+    app: {{ template "airflow.name" $root }}-{{ .name }}-worker
+    component: {{ template "airflow.name" $root }}-worker
+    chart: {{ template "airflow.chart" $root }}
+    release: {{ $root.Release.Name }}
+    heritage: {{ $root.Release.Service }}
+    queue: "{{ .queueName }}"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ template "airflow.fullname" $root }}-{{ .name }}-worker
+  minReplicas: {{ if .hpa.minReplicas }}{{ .hpa.minReplicas }}{{ else }}2{{ end }}
+  maxReplicas: {{ if .hpa.maxReplicas }}{{ .hpa.maxReplicas }}{{ else }}10{{ end }}
+  metrics:
+  - type: Pods
+    pods:
+      metric:
+        name: airflow_workers_active_tasks
+      target:
+        type: AverageValue
+        averageValue: 99
+  - type: External
+    external:
+      metric:
+        name: airflow_active_tasks
+        selector:
+          matchLabels:
+            queue: "{{ .queueName }}"
+            namespace: "{{ $root.Release.Namespace }}"
+      target:
+        type: AverageValue
+        averageValue: {{ .concurrency }}
+{{- end }}
+
+{{- end }}
+{{- end }}

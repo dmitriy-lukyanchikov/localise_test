@@ -1,0 +1,32 @@
+logLevel: 4
+metricsRelistInterval: 1m
+
+prometheus:
+  url: http://prometheus-operated.monitoring.svc
+  port: 9090
+
+nodeSelector:
+  owner: data
+  component: airflow-system
+
+rules:
+  default: false
+  custom:
+    - seriesQuery: 'airflow_workers_active_tasks{namespace!="",host_name!="",queue!=""}'
+      resources:
+        overrides:
+          host_name:
+            resource: "pod"
+          namespace:
+            resource: "namespace"
+      metricsQuery: '(max by (host_name, queue, namespace) (airflow_workers_active_tasks{<<.LabelMatchers>>}) /  max by (host_name, queue, namespace) (airflow_workers_concurrency{<<.LabelMatchers>>})) * 100'
+  external:
+    - seriesQuery: 'airflow_task_status{namespace!="",queue!="",status!="",task_id!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: "namespace"
+      name:
+        matches: "^airflow_task_status$"
+        as: "airflow_active_tasks"
+      metricsQuery: 'sum by (queue, namespace) (avg by (queue, task_id,status, namespace) (airflow_task_status{status=~"running|queued|exist",<<.LabelMatchers>>}))'

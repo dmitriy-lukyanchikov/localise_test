@@ -1,0 +1,274 @@
+# Duplicate this file and put your customization here
+monitoring:
+  namespace: "monitoring"
+
+additionalResources:
+  configMap2File: {}
+  secret2File: {}
+
+##
+## common settings and setting for the webserver
+airflow:
+  pythonModules:
+    - "braintree"
+    - kombu<4.3.0,>=4.2.0
+    - redis>=2.10.5,<3
+    - prometheus-client==0.8.0
+
+  connections:
+    emr_master_node:
+      type: http
+      host: master.emr.test.io
+
+  metrics: true
+  serviceMonitor: true
+  rbac:
+    enable: false
+  oauth:
+    enable: false
+    provider: google
+  exporter:
+    enabled: true
+    image:
+      repository: pbweb/airflow-prometheus-exporter
+      tag: latest
+      pullPolicy: Always
+#    nodeSelector:
+#      project: "airflow"
+#      environment: dev
+#      component: airflow-system
+    service:
+      type: ClusterIP
+      port: 9112
+    resources:
+      limits:
+         memory: "100M"
+         cpu: 0.2
+      requests:
+        memory: "40M"
+        cpu: 0.1
+
+  imagePullSecrets: []
+  service:
+    type: ClusterIP
+  dagsPath: /usr/local/airflow/dags
+  pluginsPath: /usr/local/airflow/plugins
+  dagsGitPath: /data/dags
+  pluginsGitPath: /data/plugins
+  image:
+    repository: puckel/docker-airflow
+    tag: 1.10.1
+    pullPolicy: Always
+
+  ## Set scheduler_num_runs to control how the schduler behaves:
+  ##   -1 will let him looping indefinitively but it will never update the DAG
+  ##   1 will have the scheduler quit after each refresh, but kubernetes will restart it
+  scheduler:
+    replicas: 1
+    num_runs: "-1"
+#    nodeSelector: 
+#      project: "airflow"
+#      environment: dev
+#      component: airflow-system
+    env: {}
+    updateStategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 50%
+    pythonModules: []
+    affinity:
+      podAntiAffinity: {}
+  
+  ## how many replicas for web server
+  ## For the moment, we recommend to leave this value to 1, since the webserver instance performs
+  ## the 'initdb' operation, starting more replicas will cause all the web containers to execute
+  ## it, which may cause unwanted issues on the database.
+  web:
+    replicas: 1
+    nodeport: 30080	# Apply only if service type is NodePort
+#    nodeSelector: 
+#      project: "airflow"
+#      environment: dev
+#      component: airflow-system
+    env: {}
+    updateStategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 50%
+    pythonModules: []
+    affinity:
+      podAntiAffinity: {}
+  
+  ## Number of replicas for the flower server. Usually 1 is enough
+  flower:
+    replicas: 1
+    nodeport: 30055	# Apply only if service type is NodePort
+#    nodeSelector: 
+#      project: "airflow"
+#      environment: dev
+#      component: airflow-system
+    env: {}
+    updateStategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 50%
+    pythonModules: []
+    affinity:
+      podAntiAffinity: {}
+
+
+## Configuration for celery workers
+  workersUnified:
+  - name: "aws-unified"
+    enable: true
+    affinity:
+      podAntiAffinity: {}
+    hpa:
+      enable: false
+    queueName: "aws"
+    hostLogs: false
+    S3Configs: []
+    num_workers: 2
+#    nodeSelector:
+#      project: airflow
+#      environment: dev
+#      component: airflow-workers
+    hostNetwork: false
+    dnsPolicy: ClusterFirst
+    concurrency: 5
+    env: {}
+    pythonModules: []
+
+
+
+  ##
+  ## Custom airflow configuration environment variables
+  env:
+    AIRFLOW__CORE__EXECUTOR: 'CeleryExecutor'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB"
+    AIRFLOW__CELERY__BROKER_URL: "redis://:$REDIS_PREFIX@$REDIS_HOST:$REDIS_PORT/1"
+    AIRFLOW__CELERY__RESULT_BACKEND: "db+postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:$POSTGRES_PORT/$POSTGRES_DB"
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: '60'
+    AIRFLOW__CORE__DONOT_PICKLE: "True"
+    AIRFLOW__CORE__ENABLE_XCOM_PICKLING: "False"
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: '120'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "False"
+    AIRFLOW_HOME: "/usr/local/airflow"
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 60
+    AIRFLOW__SCHEDULER__MAX_THREADS: 1
+    AIRFLOW__WEBSERVER__WORKERS: 2
+    AIRFLOW__WEBSERVER__WORKER_REFRESH_INTERVAL: 600
+    IS_TEST_ENVIRONMENT: 'true'
+    DATA_SQL_SCRIPTS_BRANCH_NAME: master
+#    AIRFLOW__CORE__LOGGING_LEVEL: "DEBUG"
+
+  gitsync:
+    image:
+      repository: k8s.gcr.io/git-sync
+      tag: v3.1.1
+      pullPolicy: Always
+    env:
+      GIT_KNOWN_HOSTS: false
+      GIT_SYNC_SSH: true
+      GIT_SYNC_BRANCH: master
+      GIT_SYNC_REV: HEAD
+      GIT_SYNC_REPO: git@github.com:dmitriy-lukyanchikov/airflow_dags.git
+      GIT_SYNC_WAIT: 10
+      GIT_SYNC_PERMISSIONS: 755
+      GIT_SYNC_ROOT: "/git"
+      GIT_SYNC_DEST: "data"
+      GIT_SYNC_MAX_SYNC_FAILURES: 3
+
+
+
+## Ingress configuration
+ingress:
+  ##
+  ## enable ingress
+  ## Note: If you want to change url prefix for web ui or flower even if you do not use ingress,
+  ## you can still change ingress.web.path and ingress.flower.path
+  enabled: true
+  https: true
+  ##
+  ## Configure the webserver endpoint
+  createNamespaceSubdomain: true
+  web:
+    path: "/"
+    host: "web.airflow.test.io"
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      #certmanager.k8s.io/cluster-issuer: airflow-letsencrypt-cluster-issuer
+      #kubernetes.io/tls-acme: "true"
+      
+  ##
+  ## Configure the flower endpoind
+  flower:
+    path: "/"
+    host: "flower.airflow.test.io"
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      #certmanager.k8s.io/cluster-issuer: airflow-letsencrypt-cluster-issuer
+      #kubernetes.io/tls-acme: "true"
+
+postgresql:
+  enabled: true
+  # This user and database is superuser default user and database
+  # postgresUser: postgres
+  # postgresDatabase: postgres
+  EntrypointInitDB:
+    enable: true
+    projectDatabase: airflow
+  persistence:
+    enabled: false
+  metrics:
+    enabled: true
+    image: wrouesnel/postgres_exporter
+    imageTag: v0.4.6
+    servicePort: 9187
+#  nodeSelector:
+#    project: airflow
+#    environment: dev
+#    component: airflow-system
+
+
+redis:
+  enabled: true
+  password: airflow
+  existingSecret: ""
+  existingSecretKey: "redis-password"
+  cluster:
+    enabled: false
+    slaveCount: 1
+  master:
+    resources: {}
+    persistence:
+      enabled: false
+      storageClass: ""
+      accessModes:
+      - ReadWriteOnce
+      size: 8Gi
+
+  slave:
+    resources: {}
+    persistence:
+      enabled: false
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+      size: 8Gi
+
+
+awsInitDB:
+  enable: false      # if true will use initdb script and creates new env variable for project user, default is false
+
+  # You can change init script to anything you want
+  initScript: |-
+    psql -v ON_ERROR_STOP=0 <<-EOSQL
+        CREATE DATABASE "${PROJECT_DB}";
+        CREATE USER "${PROJECT_DB_USER}" WITH NOSUPERUSER PASSWORD '${PROJECT_DB_PASS}';
+        GRANT ALL PRIVILEGES ON DATABASE "${PROJECT_DB}" TO "${PROJECT_DB_USER}";
+    EOSQL

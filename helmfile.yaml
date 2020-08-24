@@ -1,0 +1,4 @@
+helmfiles:
+- helmfiles/prometheus-operator.yaml
+- helmfiles/nginx-ingress.yaml
+- helmfiles/airflow.yaml
