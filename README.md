@@ -23,11 +23,11 @@ add this line to the /etc/hosts file
 127.0.0.1 prometheus.airflow.test.io dev.web.airflow.test.io dev.flower.airflow.test.io
 ```
 
-Now you can visit airflow web UI and flwoer web UI dev.web.airflow.test.io dev.flower.airflow.test.io
-Also if needed you can checn prometheus prometheus.airflow.test.io
+Now you can visit airflow web UI and flwoer web UI `dev.web.airflow.test.io` `dev.flower.airflow.test.io`
+Also if needed you can checn prometheus `prometheus.airflow.test.io`
 
 
-git repo for dags is git@github.com:dmitriy-lukyanchikov/airflow_dags.git
+git repo for dags is `git@github.com:dmitriy-lukyanchikov/airflow_dags.git`
 
 
 ## Values
